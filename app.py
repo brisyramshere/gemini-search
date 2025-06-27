@@ -15,13 +15,13 @@ with st.sidebar:
     # 修正模型名称，使用官方要求的 "models/" 前缀
     # 移除了不存在的占位模型，以避免 API 错误
     model_options = {
-        "Gemini 2.5 Flash (推荐)": "models/gemini-2.5-flash-001",
+        "Gemini 2.5 Flash (推荐)": "models/gemini-2.5-flash",
         "Gemini 2.0 Flash": "models/gemini-2.0-flash-001",
     }
     
     # 初始化模型选择
     if "selected_model" not in st.session_state or st.session_state.selected_model not in model_options.values():
-        st.session_state.selected_model = "models/gemini-2.5-flash-001"
+        st.session_state.selected_model = "models/gemini-2.5-flash"
 
     # 获取当前模型的显示名称
     current_model_key = [key for key, value in model_options.items() if value == st.session_state.selected_model][0]
