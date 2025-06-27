@@ -1,7 +1,7 @@
 import google.genai as genai
 from google.genai import types
 
-from src.config import load_api_key
+from src.config import load_api_key, load_base_url
 
 # 系统提示词，指导模型如何回答和引用
 SYSTEM_PROMPT = (
@@ -24,23 +24,29 @@ def get_ai_response_stream(prompt: str, model_name: str = "models/gemini-1.5-pro
     """
     try:
         api_key = load_api_key()
-        
-        # 1. 使用 Client 类进行初始化
-        client = genai.Client(api_key=api_key)
+        base_url = load_base_url()
 
-        # 2. 定义搜索工具
+        # 1. 准备 http_options（如果 base_url 存在）
+        http_options = {}
+        if base_url:
+            http_options["base_url"] = base_url
+        
+        # 2. 使用 Client 类进行初始化
+        client = genai.Client(api_key=api_key, http_options=http_options if http_options else None)
+
+        # 3. 定义搜索工具
         search_tool = types.Tool(google_search=types.GoogleSearch())
 
-        # 3. 定义配置，将系统提示词放在 system_instruction 中
+        # 4. 定义配置，将系统提示词放在 system_instruction 中
         config = types.GenerateContentConfig(
             tools=[search_tool],
             system_instruction=SYSTEM_PROMPT
         )
 
-        # 4. 构造请求内容，直接传递字符串即可
+        # 5. 构造请求内容，直接传递字符串即可
         contents = prompt
 
-        # 5. 调用 generate_content_stream 并处理流
+        # 6. 调用 generate_content_stream 并处理流
         response_stream = client.models.generate_content_stream(
             model=model_name,
             contents=contents,
@@ -49,12 +55,26 @@ def get_ai_response_stream(prompt: str, model_name: str = "models/gemini-1.5-pro
 
         final_response = None
         for chunk in response_stream:
-            # 检查并生成��具调用（搜索）事件
+            # 检查并生成工具调用（搜索）事件
             if (
                 chunk.candidates and chunk.candidates[0].content.parts
                 and chunk.candidates[0].content.parts[0].function_call
             ):
-                query = chunk.candidates[0].content.parts[0].function_call.args.get('query')
+                function_call = chunk.candidates[0].content.parts[0].function_call
+                args = function_call.args
+                query = None
+
+                # 代理可能会将 args 作为列表返回，而不是字典，我们需要更灵活地处理
+                if isinstance(args, dict):
+                    query = args.get('query')
+                elif isinstance(args, list) and len(args) > 0:
+                    # 有时它是一个包含字典的列表
+                    if isinstance(args[0], dict):
+                        query = args[0].get('query')
+                    # 有时它直接就是一个字符串列表
+                    elif isinstance(args[0], str):
+                        query = args[0]
+                
                 if query:
                     yield {"type": "tool_call", "query": str(query)}
             
