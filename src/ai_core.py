@@ -17,7 +17,7 @@ SYSTEM_PROMPT = (
     "1. [What Makes the Sky Blue?](https://www.space.com/what-makes-the-sky-blue)"
 )
 
-def get_ai_response_stream(prompt: str, model_name: str = "models/gemini-1.5-pro-latest"):
+def get_ai_response_stream(prompt: str, model_name: str = "models/gemini-1.5-pro-latest", history: list = None):
     """
     以流的形式获取AI的响应，生成用于显示思考过程和最终结果的事件。
     严格遵循 google-genai SDK 的官方用法。
@@ -43,8 +43,14 @@ def get_ai_response_stream(prompt: str, model_name: str = "models/gemini-1.5-pro
             system_instruction=SYSTEM_PROMPT
         )
 
-        # 5. 构造请求内容，直接传递字符串即可
-        contents = prompt
+        # 5. 构造请求内容，包含历史记录和当前问题
+        contents = []
+        if history:
+            for item in history:
+                role = "user" if item["role"] == "user" else "model"
+                contents.append({"role": role, "parts": [{"text": item["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+
 
         # 6. 调用 generate_content_stream 并处理流
         response_stream = client.models.generate_content_stream(
