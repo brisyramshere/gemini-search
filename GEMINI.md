@@ -30,3 +30,11 @@
 - **事实胜于印象**：当遇到问题时，时刻记得使用搜索工具进行事实确认，或者采用增加调试log的方式确认更具体的错误信息，而非按照个人印象去盲目修改和尝试。
 - **虚拟环境路径问题**: 当 `streamlit run` 或 `python` 命令失败并显示 `bad interpreter` 或 `command not found` 等错误时，通常意味着没有使用虚拟环境中的正确可执行文件。直接调用绝对路径（如 `.venv/bin/python` 或 `.venv/bin/streamlit`）可以确保使用正确的环境和依赖，是解决此类问题的可靠方法。
 
+- **关于google-genai api引用信息的关键发现**：
+   1. `grounding_metadata` 的结构: 在整个流式响应中，grounding_metadata
+      对象始终存在，但它在前99%的块（chunk）中都是空的 ({}).
+   2. 引用信息的位置: 只有在最后一个数据块中，grounding_metadata 才被填充内容。然而，它填充的是
+      search_entry_point（用于UI展示）和 web_search_queries（模型执行的搜索词），里面并没有我们期望的 
+      `citations` 列表。
+   3. 引用由模型生成: 引用链接（1. 
+      [Title](URL)）是由模型在回答的文本正文中直接生成的，而不是通过一个独立的、结构化的元数据字段提供的。
