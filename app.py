@@ -36,6 +36,23 @@ if "conversations" not in st.session_state:
 if "generating_report" not in st.session_state:
     st.session_state.generating_report = False
 
+# --- 函数定义 ---
+def create_new_conversation():
+    """创建一个新的对话。"""
+    new_id = str(st.session_state.next_conversation_id)
+    st.session_state.conversations[new_id] = {
+        "title": f"新对话 {new_id}",
+        "messages": [{"role": "assistant", "content": "你好！我可以联网查询最新信息，并告诉你我的信息来源。", "type": "chat"}]
+    }
+    st.session_state.current_conversation_id = new_id
+    st.session_state.next_conversation_id += 1
+    save_conversations_to_file({
+        "conversations": st.session_state.conversations,
+        "current_conversation_id": st.session_state.current_conversation_id,
+        "next_conversation_id": st.session_state.next_conversation_id
+    })
+    st.rerun()
+
 # --- 侧边栏 ---
 with st.sidebar:
     st.header("Gemini 搜索")
