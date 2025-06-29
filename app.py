@@ -69,10 +69,6 @@ with st.sidebar:
     if st.button("➕ 新对话", use_container_width=True):
         create_new_conversation()
 
-    if st.button("📝 一键生成报告", use_container_width=True):
-        st.session_state.generating_report = True
-        st.rerun()
-
     conversation_ids = list(st.session_state.conversations.keys())
     current_id = st.session_state.current_conversation_id
     
@@ -81,17 +77,31 @@ with st.sidebar:
         current_id = conversation_ids[0] if conversation_ids else "1"
         st.session_state.current_conversation_id = current_id
 
-    st.session_state.current_conversation_id = st.selectbox(
-        "选择一个对话:",
-        options=conversation_ids,
-        format_func=lambda conv_id: st.session_state.conversations[conv_id]["title"],
-        index=conversation_ids.index(current_id),
-        on_change=lambda: save_conversations_to_file({
-            "conversations": st.session_state.conversations,
-            "current_conversation_id": st.session_state.current_conversation_id,
-            "next_conversation_id": st.session_state.next_conversation_id
-        })
-    )
+    # --- 侧边栏对话列表 ---
+    for conv_id in conversation_ids:
+        with st.container():
+            col1, col2 = st.columns([0.8, 0.2])
+            with col1:
+                if st.button(st.session_state.conversations[conv_id]["title"], key=f"conv_select_{conv_id}", use_container_width=True):
+                    st.session_state.current_conversation_id = conv_id
+                    st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"conv_delete_{conv_id}", use_container_width=True):
+                    # 删除对话
+                    del st.session_state.conversations[conv_id]
+                    # 如果删除的是当前对话，则切换到列表中的第一个对话
+                    if st.session_state.current_conversation_id == conv_id:
+                        if st.session_state.conversations:
+                            st.session_state.current_conversation_id = list(st.session_state.conversations.keys())[0]
+                        else:
+                            # 如果所有对话都被删除了，创建一个新的
+                            create_new_conversation()
+                    save_conversations_to_file({
+                        "conversations": st.session_state.conversations,
+                        "current_conversation_id": st.session_state.current_conversation_id,
+                        "next_conversation_id": st.session_state.next_conversation_id
+                    })
+                    st.rerun()
 
     st.markdown("---")
     st.info("点击“一键生成报告”按钮，可将当前对话内容合成为一份研究报告。")
@@ -107,16 +117,22 @@ st.caption(f"一个能展示思考过程并引用来源的AI聊天机器人 (当
 # --- 显示历史消息 ---
 for i, message in enumerate(current_conversation["messages"]):
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        col1, col2 = st.columns([0.9, 0.1])
+        with col1:
+            st.markdown(message["content"])
+        with col2:
+            if st.button("🗑️", key=f"msg_delete_{st.session_state.current_conversation_id}_{i}", use_container_width=True):
+                del current_conversation["messages"][i]
+                save_conversations_to_file({
+                    "conversations": st.session_state.conversations,
+                    "current_conversation_id": st.session_state.current_conversation_id,
+                    "next_conversation_id": st.session_state.next_conversation_id
+                })
+                st.rerun()
+
         if message.get("type") == "report" and i == len(current_conversation["messages"]) - 1:
-            report_title = re.sub(r'[\\/*?_<>|:]','_', current_conversation['title'])
-            st.download_button(
-                label="📥 下载报告 (Markdown)",
-                data=message["content"],
-                file_name=f"{report_title}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
+            pass
+
 
 # --- 报告生成处理 ---
 if st.session_state.get("generating_report"):
@@ -153,6 +169,28 @@ if st.session_state.get("generating_report"):
             "next_conversation_id": st.session_state.next_conversation_id
         })
     st.rerun()
+
+# --- 底部功能按钮 ---
+st.markdown("---")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("📝 生成调研报告", use_container_width=True):
+        st.session_state.generating_report = True
+        st.rerun()
+with col2:
+    # 准备下载内容
+    full_conversation_md = f"# {current_conversation['title']}\n\n"
+    for msg in current_conversation["messages"]:
+        full_conversation_md += f"**{msg['role'].capitalize()}**: \n\n{msg['content']}\n\n---\n\n"
+    
+    report_title_for_file = re.sub(r'[\\/*?_<>|:]','_', current_conversation['title'])
+    st.download_button(
+        label="📥 保存为 Markdown",
+        data=full_conversation_md,
+        file_name=f"对话记录 - {report_title_for_file}.md",
+        mime="text/markdown",
+        use_container_width=True,
+    )
 
 # --- 聊天输入框 ---
 if prompt := st.chat_input("请输入您的问题..."):
