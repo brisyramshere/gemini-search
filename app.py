@@ -2,6 +2,7 @@ import streamlit as st
 import re
 from src.ai_core import get_ai_response_stream, generate_research_report_stream
 from src.utils import save_conversations_to_file, load_conversations_from_file
+from src.config import init_config, get_config, update_config, save_config
 
 # --- 页面配置 ---
 st.set_page_config(
@@ -9,6 +10,9 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide",
 )
+
+# --- 初始化配置 ---
+init_config()
 
 # --- 会话状态初始化 ---
 if "conversations" not in st.session_state:
@@ -34,40 +38,52 @@ if "generating_report" not in st.session_state:
 
 # --- 侧边栏 ---
 with st.sidebar:
-    st.header("模型配置")
-    model_options = {
-        "Gemini 2.5 Pro (推荐)": "models/gemini-2.5-pro",
-        "Gemini 2.5 Flash": "models/gemini-2.5-flash",
-        "Gemini 2.0 Flash": "models/gemini-2.0-flash-001",
-    }
+    st.header("Gemini 搜索")
+
+    # --- 对话管理与设置 ---
+    col1, col2 = st.columns([0.8, 0.2])
+    with col1:
+        if st.button("➕ 新对话", use_container_width=True):
+            create_new_conversation()
+    with col2:
+        settings_popover = st.popover("⚙", use_container_width=True)
+
+    with settings_popover:
+        with st.form("settings_form"):
+            st.subheader("API 配置")
+            api_endpoint = st.text_input("API Endpoint", value=get_config("api_endpoint"))
+            api_key = st.text_input("Gemini API Key", type="password", value=get_config("api_key"))
+
+            st.subheader("模型选择")
+            model_options = ["models/gemini-2.5-pro", "models/gemini-2.5-flash", "models/gemini-2.0-flash-001"]
+            search_model = st.selectbox(
+                "搜索模型",
+                options=model_options,
+                index=model_options.index(get_config("search_model", "models/gemini-2.5-flash"))
+            )
+            report_model = st.selectbox(
+                "报告生成模型",
+                options=model_options,
+                index=model_options.index(get_config("report_model", "models/gemini-2.5-pro"))
+            )
+
+            st.subheader("提示词 (Prompts)")
+            system_prompt = st.text_area("系统提示词", value=get_config("system_prompt"), height=200)
+            report_prompt = st.text_area("报告生成提示词", value=get_config("report_prompt"), height=200)
+
+            submitted = st.form_submit_button("保存设置")
+            if submitted:
+                update_config("api_endpoint", api_endpoint)
+                update_config("api_key", api_key)
+                update_config("search_model", search_model)
+                update_config("report_model", report_model)
+                update_config("system_prompt", system_prompt)
+                update_config("report_prompt", report_prompt)
+                st.toast("设置已保存！")
+                # Popover will close automatically on rerun, no need for .close()
+                st.rerun()
     
-    selected_model_key = st.selectbox(
-        "选择一个 Gemini 模型:",
-        options=list(model_options.keys()),
-        index=list(model_options.values()).index(st.session_state.get("selected_model", "models/gemini-2.5-pro"))
-    )
-    st.session_state.selected_model = model_options[selected_model_key]
-
-    st.markdown("---")
-
-    st.header("对话管理")
-
-    def create_new_conversation():
-        conv_id = str(st.session_state.next_conversation_id)
-        st.session_state.conversations[conv_id] = {
-            "title": f"新对话 {conv_id}",
-            "messages": [{"role": "assistant", "content": "你好！这是一个新的对话。", "type": "chat"}]
-        }
-        st.session_state.current_conversation_id = conv_id
-        st.session_state.next_conversation_id += 1
-        save_conversations_to_file({
-            "conversations": st.session_state.conversations,
-            "current_conversation_id": st.session_state.current_conversation_id,
-            "next_conversation_id": st.session_state.next_conversation_id
-        })
-
-    if st.button("➕ 新对话", use_container_width=True):
-        create_new_conversation()
+    st.header("历史对话")
 
     conversation_ids = list(st.session_state.conversations.keys())
     current_id = st.session_state.current_conversation_id
@@ -104,15 +120,15 @@ with st.sidebar:
                     st.rerun()
 
     st.markdown("---")
-    st.info("点击“一键生成报告”按钮，可将当前对话内容合成为一份研究报告。")
+    st.info("点击“生成调研报告”按钮，可将当前对话内容合成为一份研究报告。")
 
 # --- 获取当前对话 ---
 current_conversation = st.session_state.conversations[st.session_state.current_conversation_id]
 
 # --- 页面标题 ---
-st.title("🤖 Gemini 联网搜索聊天 (Pro)")
+st.title("🤖 Gemini 联网搜索聊天")
 st.header(f"{current_conversation['title']}")
-st.caption(f"一个能展示思考过程并引用来源的AI聊天机器人 (当前模型: {selected_model_key})")
+st.caption(f"一个能展示思考过程并引用来源的AI聊天机器人 (搜索模型: {get_config('search_model')})")
 
 # --- 显示历史消息 ---
 for i, message in enumerate(current_conversation["messages"]):
@@ -120,6 +136,8 @@ for i, message in enumerate(current_conversation["messages"]):
         col1, col2 = st.columns([0.9, 0.1])
         with col1:
             st.markdown(message["content"])
+            if message["role"] == "assistant" and "model" in message:
+                st.caption(f"由 {message['model']} 生成")
         with col2:
             if st.button("🗑️", key=f"msg_delete_{st.session_state.current_conversation_id}_{i}", use_container_width=True):
                 del current_conversation["messages"][i]
@@ -140,10 +158,12 @@ if st.session_state.get("generating_report"):
     with st.chat_message("assistant"):
         report_placeholder = st.empty()
         report_output = ""
+        report_model_name = get_config("report_model") # 获取模型名称
 
         try:
             history = current_conversation["messages"]
-            response_stream = generate_research_report_stream(history, model_name=st.session_state.selected_model)
+            # 使用配置中的报告模型
+            response_stream = generate_research_report_stream(history, model_name=report_model_name)
             
             for event in response_stream:
                 if event["type"] == "report_chunk":
@@ -162,7 +182,7 @@ if st.session_state.get("generating_report"):
 
     # Add the complete report to the conversation history
     if report_output:
-        current_conversation["messages"].append({"role": "assistant", "content": report_output, "type": "report"})
+        current_conversation["messages"].append({"role": "assistant", "content": report_output, "type": "report", "model": report_model_name})
         save_conversations_to_file({
             "conversations": st.session_state.conversations,
             "current_conversation_id": st.session_state.current_conversation_id,
@@ -175,8 +195,12 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 with col1:
     if st.button("📝 生成调研报告", use_container_width=True):
-        st.session_state.generating_report = True
-        st.rerun()
+        # 检查 API Key 是否已设置
+        if not get_config("api_key"):
+            st.error("请先在侧边栏的“设置”中输入您的 Gemini API Key。")
+        else:
+            st.session_state.generating_report = True
+            st.rerun()
 with col2:
     # 准备下载内容
     full_conversation_md = f"# {current_conversation['title']}\n\n"
@@ -194,45 +218,52 @@ with col2:
 
 # --- 聊天输入框 ---
 if prompt := st.chat_input("请输入您的问题..."):
-    current_conversation["messages"].append({"role": "user", "content": prompt, "type": "chat"})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    # 检查 API Key 是否已设置
+    if not get_config("api_key"):
+        st.error("请先在侧边栏的“设置”中输入您的 Gemini API Key。")
+    else:
+        current_conversation["messages"].append({"role": "user", "content": prompt, "type": "chat"})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        full_response = ""
-        response_placeholder = st.empty()
+        with st.chat_message("assistant"):
+            full_response = ""
+            response_placeholder = st.empty()
+            search_model_name = get_config("search_model") # 获取模型名称
+            
+            history = current_conversation["messages"][:-1]
+
+            try:
+                # 使用配置中的搜索模型
+                response_stream = get_ai_response_stream(prompt, model_name=search_model_name, history=history)
+                
+                for event in response_stream:
+                    if event["type"] == "tool_code":
+                        st.info(f"🔍 正在搜索: `{event['query']}`")
+                    elif event["type"] == "text_chunk":
+                        full_response += event["chunk"]
+                        response_placeholder.markdown(full_response + "▌")
+                    elif event["type"] == "final_response":
+                        # The stream is complete, finalize the display
+                        response_placeholder.markdown(full_response)
+                    elif event["type"] == "error":
+                        st.error(event["message"])
+                        full_response = event["message"]
+                        break
+                
+            except Exception as e:
+                st.error(f"应用出现严重错误: {e}")
+                full_response = "应用出现严重错误，请检查后台日志。"
+
+        current_conversation["messages"].append({"role": "assistant", "content": full_response, "type": "chat", "model": search_model_name})
+
+        if len(current_conversation["messages"]) <= 3:
+            current_conversation["title"] = prompt[:30] + ("..." if len(prompt) > 30 else "")
         
-        history = current_conversation["messages"][:-1]
+        save_conversations_to_file({
+            "conversations": st.session_state.conversations,
+            "current_conversation_id": st.session_state.current_conversation_id,
+            "next_conversation_id": st.session_state.next_conversation_id
+        })
+        st.rerun()
 
-        try:
-            response_stream = get_ai_response_stream(prompt, model_name=st.session_state.selected_model, history=history)
-            
-            for event in response_stream:
-                if event["type"] == "tool_code":
-                    st.info(f"🔍 正在搜索: `{event['query']}`")
-                elif event["type"] == "text_chunk":
-                    full_response += event["chunk"]
-                    response_placeholder.markdown(full_response + "▌")
-                elif event["type"] == "final_response":
-                    # The stream is complete, finalize the display
-                    response_placeholder.markdown(full_response)
-                elif event["type"] == "error":
-                    st.error(event["message"])
-                    full_response = event["message"]
-                    break
-            
-        except Exception as e:
-            st.error(f"应用出现严重错误: {e}")
-            full_response = "应用出现严重错误，请检查后台日志。"
-
-    current_conversation["messages"].append({"role": "assistant", "content": full_response, "type": "chat"})
-
-    if len(current_conversation["messages"]) <= 3:
-        current_conversation["title"] = prompt[:30] + ("..." if len(prompt) > 30 else "")
-    
-    save_conversations_to_file({
-        "conversations": st.session_state.conversations,
-        "current_conversation_id": st.session_state.current_conversation_id,
-        "next_conversation_id": st.session_state.next_conversation_id
-    })
-    st.rerun()
