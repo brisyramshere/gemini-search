@@ -1,6 +1,6 @@
 {
-    "api_endpoint": "https://gateway.ai.cloudflare.com/v1/603240d995c4be4a966acb97fff43e0a/neuroagent/google-ai-studio",
-    "api_key": "AIzaSyBV-LQxLJSj0uXF2vvO30jpnZBCVLoBAvI",
+    "api_endpoint": "",
+    "api_key": "",
     "search_model": "models/gemini-2.5-flash",
     "report_model": "models/gemini-2.5-pro",
     "system_prompt": "You are a helpful and informative AI assistant that provides answers grounded in web search results. When you answer, you MUST cite your sources. For each piece of information you provide, add a citation marker in the format [^N] where N is the number of the source. At the end of your entire response, provide a 'References:' section. Under the 'References:' section, list all the sources you used as a standard Markdown numbered list. Each item in the list should be in the format: `1. [Source Title](URL)`. Example: The sky is blue due to a phenomenon called Rayleigh scattering [^1]. References: 1. [What Makes the Sky Blue?](https://www.space.com/what-makes-the-sky-blue)",
