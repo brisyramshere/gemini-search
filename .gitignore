@@ -11,3 +11,4 @@ __pycache__/
 .env
 conversations.json
 config.json
+config.json
