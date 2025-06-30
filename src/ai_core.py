@@ -3,6 +3,7 @@ from google.genai import types
 import re
 
 from src.config import load_api_key, get_config
+from src.utils import preprocess_history_for_report # 导入新的预处理函数
 
 def _get_client():
     """Helper to initialize and return the genai.Client"""
@@ -58,40 +59,42 @@ def get_ai_response_stream(prompt: str, model_name: str, history: list = None):
     except Exception as e:
         yield {"type": "error", "message": f"An error occurred: {e}"}
 
-def _format_history_for_report(history: list) -> str:
-    """Formats the conversation history for the report generation prompt."""
-    formatted_string = ""
-    for message in history:
-        # Ensure the message has the expected keys
-        if "role" in message and "content" in message:
-            role = "User" if message["role"] == "user" else "Assistant"
-            content = message["content"]
-            formatted_string += f"**{role}:**\n{content}\n\n---\n"
-    return formatted_string.strip()
-
-
 def generate_research_report_stream(history: list, model_name: str):
     """
-    Generates a research report stream based on the conversation history by calling the Gemini API.
+    Generates a research report stream. The model generates the body,
+    and this function appends the pre-processed, accurate reference list.
     """
     try:
         client = _get_client()
-        # 1. Filter for actual chat messages to build the report from.
+        # 1. Filter for actual chat messages
         chat_history = [msg for msg in history if msg.get("type") == "chat"]
         if not chat_history:
-            yield {"type": "error", "message": "当前对话没有内容可供生成报告。"}
+            yield {"type": "error", "message": "当��对话没有内容可供生成报告。"}
             return
 
-        formatted_history = _format_history_for_report(chat_history)
+        # 2. Preprocess history to get cleaned text and the accurate reference list
+        processed_history_text, global_references_str = preprocess_history_for_report(chat_history)
 
-        # 2. Dynamically load the report prompt each time.
+        if not processed_history_text:
+             yield {"type": "error", "message": "预处理后没有内容可供生成报告。"}
+             return
+
+        # 3. Dynamically load the report prompt template
         report_prompt_template = get_config("report_prompt")
-        report_prompt = f"{report_prompt_template}\n\n**以下是需要分析的对话历史:**\n---\n{formatted_history}\n---"
-
-        # 3. Call the Gemini API using the client
-        # No system instruction needed as the full instruction is in the user prompt
+        
+        # 4. Construct the final prompt, now instructing the model NOT to generate a reference list.
+        final_prompt = (
+            f"{report_prompt_template}\n\n"
+            f"**CRITICAL INSTRUCTION: Your task is to synthesize the 'Conversation History' into a report. "
+            f"You MUST correctly use the citation markers (e.g., [^1], [^2]) as they appear in the text. "
+            f"DO NOT generate a 'References' or '参考文献' section at the end of your report. This will be handled externally.**\n\n"
+            f"**Conversation History to Synthesize:**\n---\n"
+            f"{processed_history_text}\n---"
+        )
+        
+        # 5. Call the Gemini API
         config = types.GenerateContentConfig()
-        contents = [{"role": "user", "parts": [{"text": report_prompt}]}]
+        contents = [{"role": "user", "parts": [{"text": final_prompt}]}]
 
         response_stream = client.models.generate_content_stream(
             model=model_name,
@@ -99,13 +102,19 @@ def generate_research_report_stream(history: list, model_name: str):
             config=config,
         )
 
-        # 4. Yield the response chunks
+        # 6. Yield the report body chunks from the model
         for chunk in response_stream:
             if chunk.text:
                 yield {"type": "report_chunk", "chunk": chunk.text}
 
+        # 7. After the model is done, yield the accurate, pre-processed reference list
+        # This ensures the reference list is always 100% correct.
+        if global_references_str:
+            yield {"type": "final_references", "content": global_references_str}
+        
         # Yield a final response marker to signal completion.
         yield {"type": "final_response"}
 
     except Exception as e:
         yield {"type": "error", "message": f"调用 Gemini API 生成报告时出错: {e}"}
+

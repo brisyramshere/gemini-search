@@ -153,6 +153,12 @@ for i, message in enumerate(current_conversation["messages"]):
         col1, col2 = st.columns([0.9, 0.1])
         with col1:
             st.markdown(message["content"])
+            
+            # 如果消息是报告并且有引用，则在折叠控件中显示它们
+            if message.get("type") == "report" and "references" in message and message["references"]:
+                with st.expander("参考文献"):
+                    st.markdown(message["references"])
+
             if message["role"] == "assistant" and "model" in message:
                 st.caption(f"由 {message['model']} 生成")
         with col2:
@@ -165,47 +171,62 @@ for i, message in enumerate(current_conversation["messages"]):
                 })
                 st.rerun()
 
-        if message.get("type") == "report" and i == len(current_conversation["messages"]) - 1:
-            pass
-
 
 # --- 报告生成处理 ---
 if st.session_state.get("generating_report"):
     st.session_state.generating_report = False
     with st.chat_message("assistant"):
         report_placeholder = st.empty()
-        report_output = ""
-        report_model_name = get_config("report_model") # 获取模型名称
+        report_model_name = get_config("report_model")
+        report_body = ""
+        final_references = ""
 
         try:
             history = current_conversation["messages"]
-            # 使用配置中的报告模型
             response_stream = generate_research_report_stream(history, model_name=report_model_name)
             
             for event in response_stream:
                 if event["type"] == "report_chunk":
-                    report_output += event["chunk"]
-                    report_placeholder.markdown(report_output + "▌")
-                elif event["type"] == "final_response":
-                    # The report is complete, finalize the display
-                    report_placeholder.markdown(report_output)
+                    report_body += event["chunk"]
+                    report_placeholder.markdown(report_body + "▌")
+                elif event["type"] == "final_references":
+                    final_references = event["content"]
                 elif event["type"] == "error":
                     st.error(event["message"])
-                    report_output = event["message"]
+                    report_body = event["message"]
                     break
+            
+            # 清理可能由模型意外生成的引用标题
+            cleaned_body = re.sub(r"(?i)\s*(#+\s*References|#+\s*参考文献)\s*$", "", report_body.strip())
+            
+            # 在UI上显示最终的报告正文
+            report_placeholder.markdown(cleaned_body)
+
+            # 在独立的折叠控件中显示引用
+            if final_references:
+                with st.expander("参考文献"):
+                    st.markdown(final_references)
+
         except Exception as e:
             st.error(f"生成报告时出现严重错误: {e}")
-            report_output = "生成报告时出现严重错误，请检查后台日志。"
+            cleaned_body = "生成报告时出现严重错误，请检查后台日志。"
+            report_placeholder.markdown(cleaned_body)
 
-    # Add the complete report to the conversation history
-    if report_output:
-        current_conversation["messages"].append({"role": "assistant", "content": report_output, "type": "report", "model": report_model_name})
+    # 将结构化的报告（正文和引用分离）保存到对话历史
+    if cleaned_body or final_references:
+        current_conversation["messages"].append({
+            "role": "assistant", 
+            "content": cleaned_body, 
+            "references": final_references,
+            "type": "report", 
+            "model": report_model_name
+        })
         save_conversations_to_file({
             "conversations": st.session_state.conversations,
             "current_conversation_id": st.session_state.current_conversation_id,
             "next_conversation_id": st.session_state.next_conversation_id
         })
-    st.rerun()
+        st.rerun()
 
 # --- 底部功能按钮 ---
 st.markdown("---")

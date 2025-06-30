@@ -2,91 +2,128 @@ import sys
 import os
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
+import asyncio
+import re
 
 # 将src目录添加到Python路径，以便导入模块
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
 
-from src.ai_core import get_ai_response_stream
-from src.utils import correct_references
+from src.ai_core import get_ai_response_stream, generate_research_report_stream
+from src.config import init_config, get_config
+from src.utils import preprocess_history_for_report
 
-def main_console_app():
-    """
-    一个功能与Streamlit应用对等的纯终端聊天应用，用于调试。
-    移除了交互式输入，并使用一个需要联网搜索的问题来测试特定模型的功能。
-    """
-    console = Console()
+# --- 全局变量 ---
+console = Console()
+SEARCH_MODEL_FOR_TEST = "models/gemini-2.0-flash-001" 
+REPORT_MODEL_FOR_TEST = "models/gemini-2.5-pro"
+
+async def run_chat_turn(prompt, history):
+    """运行一轮聊天对话并返回最终结果。"""
+    console.print(f"[bold green]You:[/bold green] {prompt}")
+    console.print("\n[bold blue]Assistant:[/bold blue] ", end="")
     
-    console.print(Markdown("# 🤖 Gemini 联网搜索聊天 (终端版)"))
-    console.print("这是一个用于调试的纯终端聊天机器人。")
+    full_response = ""
+    
+    response_stream = get_ai_response_stream(prompt, model_name=SEARCH_MODEL_FOR_TEST, history=history)
+    
+    for event in response_stream:
+        if event["type"] == "tool_code":
+            console.print(f"\n[yellow]🔍 正在搜索: `{event['query']}`[/yellow]")
+        elif event["type"] == "text_chunk":
+            print(event["chunk"], end="", flush=True)
+            full_response += event["chunk"]
+        elif event["type"] == "final_response":
+            print()
+        elif event["type"] == "error":
+            console.print(f"\n[bold red]错误:[/bold red] {event['message']}")
+            full_response = event["message"]
+            break
+            
+    console.print("-" * 50)
+    return {"role": "assistant", "content": full_response, "type": "chat"}
+
+async def run_report_generation(history):
+    """运行报告生成并打印结果，现在会自己附加引用列表。"""
+    console.print(Panel("[bold cyan]🚀 开始生成研究报告...[/bold cyan]", expand=False))
+
+    # --- 调试步骤：在调用AI之前，先检查预处理函数的输出 ---
+    console.print("\n[bold yellow]----------- DEBUG: Inspecting pre-processing output -----------[/bold yellow]")
+    processed_text, global_refs = preprocess_history_for_report(history)
+    console.print(f"Type of global_refs: {type(global_refs)}")
+    console.print(f"Length of global_refs: {len(global_refs)}")
+    console.print(f"Content of global_refs:\n---\n{global_refs}\n---")
+    console.print("[bold yellow]-------------------- END OF DEBUG --------------------[/bold yellow]\n")
+
+
+    console.print("\n[bold magenta]报告生成中:[/bold magenta] ", end="")
+    report_body = ""
+    final_references = ""
+    
+    # 调用已经更新的报告生成流
+    response_stream = generate_research_report_stream(history, model_name=REPORT_MODEL_FOR_TEST)
+    
+    for event in response_stream:
+        if event["type"] == "report_chunk":
+            print(event["chunk"], end="", flush=True)
+            report_body += event["chunk"]
+        elif event["type"] == "final_references":
+            # 收到由代码生成的、100%准确的引用列表
+            final_references = event["content"]
+        elif event["type"] == "final_response":
+            print() # 换行
+        elif event["type"] == "error":
+            console.print(f"\n[bold red]错误:[/bold red] {event['message']}")
+            report_body = event["message"]
+            break
+            
+    # 将报告正文和准确的引用列表拼接起来
+    full_report = report_body
+    if final_references:
+        # 移除可能由模型意外生成的引用标题
+        report_body = re.sub(r"(?i)(?:\*\*References:|参考文献:)\s*$", "", report_body.strip())
+        full_report = report_body + "\n\n## References\n" + final_references
+
+    console.print(Panel("[bold green]✅ 报告生成完毕[/bold green]", expand=False))
+    console.print(Markdown(full_report))
     console.print("-" * 50)
 
-    # --- 模型选择 (硬编码用于非交互式测试) ---
-    selected_model = "models/gemini-2.5-flash"
-    console.print(f"正在测试模型: [cyan]{selected_model}[/cyan]")
+
+async def main_console_app():
+    """
+    一个用于测试最终优化方案的终端应用。
+    """
+    init_config()
+    
+    console.print(Markdown("# 🤖 Gemini 引用排序功能测试 (最终版)"))
+    console.print(f"搜索模型: [cyan]{SEARCH_MODEL_FOR_TEST}[/cyan] | 报告模型: [cyan]{REPORT_MODEL_FOR_TEST}[/cyan]")
     console.print("-" * 50)
 
-    # --- 聊天循环 (修改为单次执行，使用需要联网搜索的问题) ---
-    try:
-        # 硬编码的对话历史
-        history = [
-            {"role": "user", "content": "你好，我正在了解人工智能领域。"},
-            {"role": "assistant", "content": "你好！人工智能是一个非常广泛且有趣的领域。你想了解哪个具体方面呢？比如机器学习、自然语言处理，还是计算机视觉？"},
-            {"role": "user", "content": "我对自然语言处理（NLP）比较感兴趣，尤其是大型语言模型。你能简单介绍一下它的发展历史吗？"},
-            {"role": "assistant", "content": "当然。大型语言模型（LLM）的发展大致可以分为几个阶段。早期是基于规则和统计的模型，如N-gram。接着是循环神经网络（RNN）和长短期记忆网络（LSTM）的出现，它们能更好地处理序列数据。近年来，基于Transformer架构的模型，如BERT和GPT系列，取得了突破性进展，它们通过自注意力机制（Self-Attention）极大地提升了性能，成为了当前的主流。"},
-        ]
-        
-        # 打印历史消息
-        console.print("[bold]聊天记录:[/bold]")
-        for message in history:
-            color = "green" if message["role"] == "user" else "blue"
-            console.print(f"[bold {color}]{message['role'].capitalize()}:[/bold {color}] {message['content']}")
-        console.print("-" * 50)
+    if not get_config("api_key"):
+        console.print("[bold red]错误: 未找到 Gemini API Key。[/bold red]")
+        return
 
-        prompt = "基于我们上面的讨论，请问现在最领先的几个模型是哪些，它们各有什么特点？"
-        console.print(f"[bold green]You:[/bold green] {prompt}")
+    history = []
 
-        console.print("\n[bold blue]Assistant:[/bold blue] ", end="")
-        
-        full_response = ""
-        citations_from_api = []
-        
-        # 调用核心AI逻辑，并传入历史记录
-        response_stream = get_ai_response_stream(prompt, model_name=selected_model, history=history)
-        
-        for event in response_stream:
-            if event["type"] == "tool_call":
-                console.print(f"\n[yellow]🔍 正在搜索: `{event['query']}`[/yellow]")
-            
-            elif event["type"] == "text_chunk":
-                # 实时打印文本块
-                print(event["chunk"], end="", flush=True)
-                full_response += event["chunk"]
-            
-            elif event["type"] == "final_response":
-                citations_from_api = event.get("citations", [])
-                # 最终响应处理前，换个行
-                print() 
-            
-            elif event["type"] == "error":
-                console.print(f"\n[bold red]错误:[/bold red] {event['message']}")
-                full_response = event["message"]
-                break
-        
-        # 修正引用并用Markdown格式打印最终结果
-        final_corrected_text = correct_references(full_response, citations_from_api)
-        console.print("\n" + "-"*20 + " [Final Response] " + "-"*20)
-        console.print(Markdown(final_corrected_text))
-        console.print("-" * 50 + "\n")
+    # --- 对话轮次 ---
+    prompts = [
+        "神经内镜有哪些主流的厂商？",
+        "神经内镜有什么用？"
+    ]
+    for prompt in prompts:
+        assistant_response = await run_chat_turn(prompt, history)
+        history.append({"role": "user", "content": prompt, "type": "chat"})
+        history.append(assistant_response)
+    
+    # --- 生成报告 ---
+    await run_report_generation(history)
 
-    except Exception as e:
-        console.print(f"\n[bold red]应用出现严重错误:[/bold red] {e}")
 
 if __name__ == "__main__":
-    # 为了让rich库正常工作，可能需要安装它
     try:
         import rich
     except ImportError:
         print("Rich 库未安装。请运行: pip install rich")
         sys.exit(1)
         
-    main_console_app()
+    asyncio.run(main_console_app())
